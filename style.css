@@ -1,0 +1,32 @@
+#s2t_converter_settings .inline-drawer-content {
+    padding: 0.75rem;
+}
+
+#s2t_converter_settings .s2t-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.35rem 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+#s2t_converter_settings .s2t-field {
+    display: grid;
+    gap: 0.25rem;
+    margin-bottom: 0.75rem;
+}
+
+#s2t_converter_settings .s2t-field span {
+    font-weight: 600;
+}
+
+#s2t_converter_settings #s2t_cdn_url {
+    width: 100%;
+}
+
+#s2t_converter_settings .s2t-actions {
+    flex-wrap: wrap;
+}
+
+#s2t_converter_settings .s2t-actions .menu_button {
+    gap: 0.35rem;
+}
