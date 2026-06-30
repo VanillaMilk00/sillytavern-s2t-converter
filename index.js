@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     convertDisplayText: true,
     convertQuotes: true,
     preserveMarkdownCode: true,
+    writeMode: 'display',
     target: 'tw',
     cdnUrl: DEFAULT_CDN_URL,
 });
@@ -107,72 +108,59 @@ async function convertPlainText(text) {
     return converted;
 }
 
-async function convertMarkdownText(text) {
-    const settings = getSettings();
-    if (!settings.preserveMarkdownCode) {
-        return convertPlainText(text);
-    }
+function splitProtectedSegments(segments, pattern) {
+    const nextSegments = [];
 
-    const protectedPattern = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g;
-    const parts = [];
-    let lastIndex = 0;
-
-    for (const match of text.matchAll(protectedPattern)) {
-        if (match.index > lastIndex) {
-            parts.push({ text: text.slice(lastIndex, match.index), protected: false });
+    for (const segment of segments) {
+        if (segment.protected) {
+            nextSegments.push(segment);
+            continue;
         }
 
-        parts.push({ text: match[0], protected: true });
-        lastIndex = match.index + match[0].length;
+        let lastIndex = 0;
+        for (const match of segment.text.matchAll(pattern)) {
+            if (match.index > lastIndex) {
+                nextSegments.push({ text: segment.text.slice(lastIndex, match.index), protected: false });
+            }
+
+            nextSegments.push({ text: match[0], protected: true });
+            lastIndex = match.index + match[0].length;
+        }
+
+        if (lastIndex < segment.text.length) {
+            nextSegments.push({ text: segment.text.slice(lastIndex), protected: false });
+        }
     }
 
-    if (lastIndex < text.length) {
-        parts.push({ text: text.slice(lastIndex), protected: false });
+    return nextSegments;
+}
+
+function getProtectedSegments(text) {
+    const settings = getSettings();
+    let segments = [{ text, protected: false }];
+
+    if (settings.preserveMarkdownCode) {
+        segments = splitProtectedSegments(segments, /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g);
+    }
+
+    segments = splitProtectedSegments(segments, /{{[\s\S]*?}}/g);
+    segments = splitProtectedSegments(segments, /^[ \t]*\/[^\r\n]*(?:\r?\n|$)/gm);
+    segments = splitProtectedSegments(segments, /<\/?[A-Z][A-Z0-9_:-]*>/g);
+
+    return segments;
+}
+
+async function convertMarkdownText(text) {
+    if (typeof text !== 'string' || text.length === 0) {
+        return text;
     }
 
     const convertedParts = [];
-    for (const part of parts) {
+    for (const part of getProtectedSegments(text)) {
         convertedParts.push(part.protected ? part.text : await convertPlainText(part.text));
     }
 
     return convertedParts.join('');
-}
-
-async function convertStringField(owner, key) {
-    if (!owner || typeof owner[key] !== 'string') {
-        return false;
-    }
-
-    const before = owner[key];
-    const after = await convertMarkdownText(before);
-    if (after === before) {
-        return false;
-    }
-
-    owner[key] = after;
-    return true;
-}
-
-async function convertStringArrayField(owner, key) {
-    if (!owner || !Array.isArray(owner[key])) {
-        return false;
-    }
-
-    let changed = false;
-    for (let index = 0; index < owner[key].length; index += 1) {
-        if (typeof owner[key][index] !== 'string') {
-            continue;
-        }
-
-        const before = owner[key][index];
-        const after = await convertMarkdownText(before);
-        if (after !== before) {
-            owner[key][index] = after;
-            changed = true;
-        }
-    }
-
-    return changed;
 }
 
 function shouldConvertMessage(message, mode) {
@@ -192,30 +180,68 @@ function shouldConvertMessage(message, mode) {
     return message.is_user ? settings.convertOutgoing : settings.convertIncoming;
 }
 
+function getMessageSourceText(message) {
+    if (!message) {
+        return '';
+    }
+
+    if (Array.isArray(message.swipes) && Number.isInteger(message.swipe_id) && typeof message.swipes[message.swipe_id] === 'string') {
+        return message.swipes[message.swipe_id];
+    }
+
+    return typeof message.mes === 'string' ? message.mes : '';
+}
+
+function ensureMessageExtra(message) {
+    if (!message.extra || typeof message.extra !== 'object') {
+        message.extra = {};
+    }
+
+    return message.extra;
+}
+
+async function setDisplayTextFromSource(message, sourceText, targetKey) {
+    const extra = ensureMessageExtra(message);
+
+    if (typeof sourceText !== 'string' || sourceText.length === 0) {
+        if (Object.hasOwn(extra, targetKey)) {
+            delete extra[targetKey];
+            return true;
+        }
+
+        return false;
+    }
+
+    const converted = await convertMarkdownText(sourceText);
+
+    if (converted === sourceText) {
+        if (Object.hasOwn(extra, targetKey)) {
+            delete extra[targetKey];
+            return true;
+        }
+
+        return false;
+    }
+
+    if (extra[targetKey] === converted) {
+        return false;
+    }
+
+    extra[targetKey] = converted;
+    return true;
+}
+
 async function convertMessage(message) {
     const settings = getSettings();
     let changed = false;
 
-    changed = await convertStringField(message, 'mes') || changed;
-    changed = await convertStringArrayField(message, 'swipes') || changed;
-
-    if (settings.convertDisplayText) {
-        changed = await convertStringField(message.extra, 'display_text') || changed;
-    }
+    changed = await setDisplayTextFromSource(message, getMessageSourceText(message), 'display_text') || changed;
 
     if (settings.convertReasoning) {
-        changed = await convertStringField(message.extra, 'reasoning') || changed;
-        changed = await convertStringField(message.extra, 'reasoning_display_text') || changed;
-        if (Array.isArray(message.swipe_info)) {
-            for (const info of message.swipe_info) {
-                changed = await convertStringField(info?.extra, 'reasoning') || changed;
-                changed = await convertStringField(info?.extra, 'reasoning_display_text') || changed;
-            }
+        const reasoning = typeof message.extra?.reasoning === 'string' ? message.extra.reasoning : '';
+        if (reasoning) {
+            changed = await setDisplayTextFromSource(message, reasoning, 'reasoning_display_text') || changed;
         }
-    }
-
-    if (Array.isArray(message.swipes) && Number.isInteger(message.swipe_id) && typeof message.swipes[message.swipe_id] === 'string') {
-        message.mes = message.swipes[message.swipe_id];
     }
 
     return changed;
@@ -301,7 +327,7 @@ async function convertInputBox() {
 async function testConverter() {
     setBusy(true);
     try {
-        const result = await convertMarkdownText('汉语、后台服务器，以及“测试文本”。');
+        const result = await convertMarkdownText('汉语、后台服务器，以及“测试文本”。{{setvar::好感度::喜欢}}');
         globalThis.toastr?.success(result, 'OpenCC 測試');
     } finally {
         setBusy(false);
@@ -397,10 +423,6 @@ function createSettingsPanel() {
                         <input id="s2t_reasoning" type="checkbox">
                         <span>轉換 reasoning 內容</span>
                     </label>
-                    <label class="checkbox_label" for="s2t_display_text">
-                        <input id="s2t_display_text" type="checkbox">
-                        <span>轉換顯示文字</span>
-                    </label>
                     <label class="checkbox_label" for="s2t_quotes">
                         <input id="s2t_quotes" type="checkbox">
                         <span>中文引號</span>
@@ -409,6 +431,9 @@ function createSettingsPanel() {
                         <input id="s2t_preserve_code" type="checkbox">
                         <span>保留 Markdown 程式碼</span>
                     </label>
+                </div>
+                <div class="s2t-note">
+                    顯示繁體，不改原文。角色卡變量、巨集與指令會保留原樣。
                 </div>
                 <label class="s2t-field" for="s2t_target">
                     <span>轉換目標</span>
@@ -445,7 +470,6 @@ function createSettingsPanel() {
     bindCheckbox('s2t_outgoing', 'convertOutgoing');
     bindCheckbox('s2t_edits', 'convertEdits');
     bindCheckbox('s2t_reasoning', 'convertReasoning');
-    bindCheckbox('s2t_display_text', 'convertDisplayText');
     bindCheckbox('s2t_quotes', 'convertQuotes');
     bindCheckbox('s2t_preserve_code', 'preserveMarkdownCode');
     bindSelect('s2t_target', 'target');
@@ -479,13 +503,13 @@ function attachEvents() {
     }
 
     source.on(events.MESSAGE_RECEIVED, (messageId) => enqueueConversion(() => convertMessageById(messageId, 'incoming', { updateBlock: true })));
-    source.on(events.MESSAGE_SENT, (messageId) => enqueueConversion(() => convertMessageById(messageId, 'outgoing')));
+    source.on(events.MESSAGE_SENT, (messageId) => enqueueConversion(() => convertMessageById(messageId, 'outgoing', { updateBlock: true })));
     source.on(events.MESSAGE_SWIPED, (messageId) => enqueueConversion(() => convertMessageById(messageId, 'incoming', { updateBlock: true })));
-    source.on(events.MESSAGE_EDITED, (messageId) => {
+    source.on(events.MESSAGE_UPDATED, (messageId) => {
         if (!getSettings().convertEdits) {
             return;
         }
-        return enqueueConversion(() => convertMessageById(messageId, 'any'));
+        return enqueueConversion(() => convertMessageById(messageId, 'any', { updateBlock: true }));
     });
 }
 

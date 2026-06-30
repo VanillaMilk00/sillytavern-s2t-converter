@@ -1,31 +1,49 @@
 # SillyTavern 簡體轉繁體擴充
 
-這是一個 SillyTavern 第三方擴充，使用 OpenCC JS 將簡體中文轉為繁體中文。
+這是一個 SillyTavern 第三方擴充，使用 OpenCC JS 將簡體中文顯示為繁體中文。
 
 ## 功能
 
-- 自動轉換角色回覆。
-- 可選擇轉換使用者送出的訊息。
-- 可手動轉換目前聊天室或輸入框文字。
+- 自動將角色回覆顯示為繁體。
+- 預設只寫入 `message.extra.display_text`，不改 `message.mes` 或 `swipes` 原文。
+- 保護 SillyTavern 角色卡常用語法，例如 `{{setvar::好感度::喜欢}}`。
+- 保護 Markdown 程式碼區塊、行內程式碼、slash command 行與常見全大寫角括號 token。
+- 可手動轉換目前聊天室的顯示文字，或明確轉換輸入框文字。
 - 支援繁體、台灣繁體、台灣用語、香港繁體。
-- 預設保留 Markdown 程式碼區塊與行內程式碼。
 
 ## 安裝
 
-1. 將整個 `sillytavern-s2t-converter` 資料夾放到 SillyTavern 的擴充資料夾：
+在 SillyTavern 的「Import Extension From Git Repo」輸入：
 
-   ```text
-   SillyTavern/data/<user-handle>/extensions/sillytavern-s2t-converter
-   ```
+```text
+https://github.com/VanillaMilk00/sillytavern-s2t-converter.git
+```
 
-   或開發用的全域路徑：
+也可以手動將整個資料夾放到：
 
-   ```text
-   SillyTavern/public/scripts/extensions/third-party/sillytavern-s2t-converter
-   ```
+```text
+SillyTavern/data/<user-handle>/extensions/sillytavern-s2t-converter
+```
 
-2. 重新整理 SillyTavern。
-3. 到 `Extensions` 設定頁找到 `簡體轉繁體`，確認已啟用。
+或開發用的全域路徑：
+
+```text
+SillyTavern/public/scripts/extensions/third-party/sillytavern-s2t-converter
+```
+
+重新整理 SillyTavern 後，到 `Extensions` 設定頁找到 `簡體轉繁體`。
+
+## 變量與指令安全
+
+自動轉換不會改寫原始聊天內容，因此不會把角色卡依賴的簡體變量名轉成繁體。
+
+例如以下內容會保留 macro 原樣，只轉換外層顯示文字：
+
+```text
+{{getvar::状态}} 她说喜欢。
+```
+
+輸入框的「轉換輸入框」按鈕是明確手動操作，但同樣會保護 `{{...}}`、Markdown 程式碼與 `/setvar ...` 這類 slash command 行。
 
 ## 注意
 
@@ -35,4 +53,4 @@
 https://cdn.jsdelivr.net/npm/opencc-js@1.3.2-next.0/dist/esm/full.js
 ```
 
-如果你的瀏覽器無法連線到 CDN，可以在擴充設定中改成可用的 ESM module URL。
+如果瀏覽器無法連線到 CDN，可以在擴充設定中改成可用的 ESM module URL。
