@@ -5,6 +5,7 @@
 ## 功能
 
 - 自動將角色回覆顯示為繁體。
+- 角色生成中可即時顯示繁體預覽。
 - 預設只寫入 `message.extra.display_text`，不改 `message.mes` 或 `swipes` 原文。
 - 保護 SillyTavern 角色卡常用語法，例如 `{{setvar::好感度::喜欢}}`。
 - 保護 Markdown 程式碼區塊、行內程式碼、slash command 行與常見全大寫角括號 token。
@@ -44,6 +45,12 @@ SillyTavern/public/scripts/extensions/third-party/sillytavern-s2t-converter
 ```
 
 輸入框的「轉換輸入框」按鈕是明確手動操作，但同樣會保護 `{{...}}`、Markdown 程式碼與 `/setvar ...` 這類 slash command 行。
+
+## 生成中即時顯示
+
+開啟「生成中即時顯示繁體」後，擴充會在串流生成期間定期讀取目前回覆原文，轉成繁體後只更新畫面顯示。
+
+這個功能不會逐 token 改寫文字，也不會把繁體寫回 `message.mes`。生成完成後才會用完整內容更新 `message.extra.display_text`。
 
 ## 注意
 

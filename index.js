@@ -8,10 +8,12 @@ const DEFAULT_SETTINGS = Object.freeze({
     convertOutgoing: false,
     convertEdits: true,
     convertReasoning: false,
+    convertStreaming: true,
     convertDisplayText: true,
     convertQuotes: true,
     preserveMarkdownCode: true,
     writeMode: 'display',
+    streamingUpdateInterval: 250,
     target: 'tw',
     cdnUrl: DEFAULT_CDN_URL,
 });
@@ -26,6 +28,14 @@ const TARGET_LABELS = Object.freeze({
 let converterPromise = null;
 let converterSignature = '';
 let conversionQueue = Promise.resolve();
+const streamingState = {
+    active: false,
+    type: '',
+    messageId: null,
+    pending: false,
+    inFlight: false,
+    timer: null,
+};
 
 function getContext() {
     return globalThis.SillyTavern?.getContext?.();
@@ -264,6 +274,120 @@ function updateRenderedMessage(context, id, message) {
     }
 }
 
+function clearStreamingTimer() {
+    if (streamingState.timer) {
+        clearTimeout(streamingState.timer);
+        streamingState.timer = null;
+    }
+}
+
+function startStreamingPreview(type) {
+    const settings = getSettings();
+    clearStreamingTimer();
+    streamingState.active = settings.enabled && settings.convertStreaming && type !== 'quiet' && type !== 'impersonate';
+    streamingState.type = String(type || '');
+    streamingState.messageId = null;
+    streamingState.pending = false;
+    streamingState.inFlight = false;
+}
+
+function stopStreamingPreview() {
+    clearStreamingTimer();
+    streamingState.active = false;
+    streamingState.type = '';
+    streamingState.messageId = null;
+    streamingState.pending = false;
+    streamingState.inFlight = false;
+}
+
+function findStreamingMessageId(context) {
+    if (!context?.chat?.length) {
+        return null;
+    }
+
+    if (Number.isInteger(streamingState.messageId)) {
+        const message = context.chat[streamingState.messageId];
+        if (message && !message.is_user && !message.is_system) {
+            return streamingState.messageId;
+        }
+    }
+
+    for (let index = context.chat.length - 1; index >= 0; index -= 1) {
+        const message = context.chat[index];
+        if (message && !message.is_user && !message.is_system) {
+            streamingState.messageId = index;
+            return index;
+        }
+    }
+
+    return null;
+}
+
+async function renderStreamingPreview() {
+    const context = getContext();
+    const id = findStreamingMessageId(context);
+    if (!Number.isInteger(id)) {
+        return false;
+    }
+
+    const message = context.chat[id];
+    if (!shouldConvertMessage(message, 'incoming')) {
+        return false;
+    }
+
+    const changed = await convertMessage(message);
+    updateRenderedMessage(context, id, message);
+    return changed;
+}
+
+function scheduleStreamingPreview(delay = Number(getSettings().streamingUpdateInterval) || 250) {
+    if (!streamingState.active || !getSettings().enabled || !getSettings().convertStreaming) {
+        return;
+    }
+
+    streamingState.pending = true;
+    if (streamingState.timer || streamingState.inFlight) {
+        return;
+    }
+
+    const interval = Math.max(80, Number(delay) || 250);
+    streamingState.timer = setTimeout(async () => {
+        streamingState.timer = null;
+        if (!streamingState.active) {
+            streamingState.pending = false;
+            return;
+        }
+
+        streamingState.inFlight = true;
+        streamingState.pending = false;
+        try {
+            await renderStreamingPreview();
+        } catch (error) {
+            console.warn(`[${EXTENSION_NAME}] streaming preview failed`, error);
+        } finally {
+            streamingState.inFlight = false;
+            if (streamingState.pending && streamingState.active) {
+                scheduleStreamingPreview();
+            }
+        }
+    }, interval);
+}
+
+async function flushStreamingPreview() {
+    if (!streamingState.active) {
+        return;
+    }
+
+    clearStreamingTimer();
+    try {
+        await renderStreamingPreview();
+    } catch (error) {
+        console.warn(`[${EXTENSION_NAME}] streaming preview flush failed`, error);
+    } finally {
+        stopStreamingPreview();
+    }
+}
+
 async function convertMessageById(messageId, mode, { updateBlock = false } = {}) {
     const context = getContext();
     const id = Number(messageId);
@@ -440,6 +564,10 @@ function createSettingsPanel() {
                         <input id="s2t_reasoning" type="checkbox">
                         <span>轉換 reasoning 內容</span>
                     </label>
+                    <label class="checkbox_label" for="s2t_streaming">
+                        <input id="s2t_streaming" type="checkbox">
+                        <span>生成中即時顯示繁體</span>
+                    </label>
                     <label class="checkbox_label" for="s2t_quotes">
                         <input id="s2t_quotes" type="checkbox">
                         <span>中文引號</span>
@@ -487,6 +615,7 @@ function createSettingsPanel() {
     bindCheckbox('s2t_outgoing', 'convertOutgoing');
     bindCheckbox('s2t_edits', 'convertEdits');
     bindCheckbox('s2t_reasoning', 'convertReasoning');
+    bindCheckbox('s2t_streaming', 'convertStreaming');
     bindCheckbox('s2t_quotes', 'convertQuotes');
     bindCheckbox('s2t_preserve_code', 'preserveMarkdownCode');
     bindSelect('s2t_target', 'target');
@@ -517,6 +646,13 @@ function attachEvents() {
     const source = context?.eventSource;
     if (!events || !source?.on) {
         throw new Error('SillyTavern event source is not available.');
+    }
+
+    source.on(events.GENERATION_STARTED, (type) => startStreamingPreview(type));
+    source.on(events.GENERATION_ENDED, () => enqueueConversion(flushStreamingPreview));
+    source.on(events.GENERATION_STOPPED, () => enqueueConversion(flushStreamingPreview));
+    if (events.STREAM_TOKEN_RECEIVED) {
+        source.on(events.STREAM_TOKEN_RECEIVED, () => scheduleStreamingPreview());
     }
 
     source.on(events.MESSAGE_RECEIVED, (messageId) => enqueueConversion(() => convertMessageById(messageId, 'incoming', { updateBlock: true })));
