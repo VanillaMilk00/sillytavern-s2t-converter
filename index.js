@@ -247,6 +247,23 @@ async function convertMessage(message) {
     return changed;
 }
 
+function updateRenderedMessage(context, id, message) {
+    if (typeof document === 'undefined' || typeof context.updateMessageBlock !== 'function') {
+        return;
+    }
+
+    const messageElement = document.querySelector(`.mes[mesid="${id}"]`);
+    if (!messageElement) {
+        return;
+    }
+
+    try {
+        context.updateMessageBlock(id, message);
+    } catch (error) {
+        console.warn(`[${EXTENSION_NAME}] failed to update rendered message`, error);
+    }
+}
+
 async function convertMessageById(messageId, mode, { updateBlock = false } = {}) {
     const context = getContext();
     const id = Number(messageId);
@@ -262,8 +279,8 @@ async function convertMessageById(messageId, mode, { updateBlock = false } = {})
     }
 
     await context.saveChat?.();
-    if (updateBlock && typeof context.updateMessageBlock === 'function') {
-        context.updateMessageBlock(id, message);
+    if (updateBlock) {
+        updateRenderedMessage(context, id, message);
     }
 
     return true;
