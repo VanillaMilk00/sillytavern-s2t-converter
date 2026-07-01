@@ -48,7 +48,7 @@ SillyTavern/public/scripts/extensions/third-party/sillytavern-s2t-converter
 
 ## 生成中即時顯示
 
-開啟「生成中即時顯示繁體」後，擴充會在串流生成期間定期讀取目前回覆原文，轉成繁體後只更新畫面顯示。
+開啟「生成中即時顯示繁體」後，擴充會在串流生成期間定期讀取目前回覆原文，轉成繁體後用獨立預覽層顯示，避免和 SillyTavern 的串流 DOM 更新互相覆蓋。
 
 這個功能不會逐 token 改寫文字，也不會把繁體寫回 `message.mes`。生成完成後才會用完整內容更新 `message.extra.display_text`。
 

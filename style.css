@@ -37,3 +37,11 @@
 #s2t_converter_settings .s2t-actions .menu_button {
     gap: 0.35rem;
 }
+
+.mes.s2t-streaming-preview-active .mes_text {
+    display: none !important;
+}
+
+.s2t-stream-preview {
+    overflow-wrap: anywhere;
+}

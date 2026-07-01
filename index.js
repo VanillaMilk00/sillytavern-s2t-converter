@@ -274,6 +274,66 @@ function updateRenderedMessage(context, id, message) {
     }
 }
 
+function getMessageElement(id) {
+    if (typeof document === 'undefined') {
+        return null;
+    }
+
+    return document.querySelector(`.mes[mesid="${id}"]`);
+}
+
+function removeStreamingPreview(id = streamingState.messageId) {
+    if (!Number.isInteger(id)) {
+        return;
+    }
+
+    const messageElement = getMessageElement(id);
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.classList?.remove('s2t-streaming-preview-active');
+    messageElement.querySelector('.s2t-stream-preview')?.remove();
+}
+
+function renderFormattedText(context, id, message, text) {
+    if (typeof context.messageFormatting === 'function') {
+        return context.messageFormatting(text, message.name, message.is_system, message.is_user, id, {}, false);
+    }
+
+    return null;
+}
+
+function updateStreamingPreviewElement(context, id, message) {
+    const previewText = message?.extra?.display_text;
+    if (!previewText) {
+        removeStreamingPreview(id);
+        return;
+    }
+
+    const messageElement = getMessageElement(id);
+    const messageTextElement = messageElement?.querySelector('.mes_text');
+    if (!messageElement || !messageTextElement) {
+        return;
+    }
+
+    let previewElement = messageElement.querySelector('.s2t-stream-preview');
+    if (!previewElement) {
+        previewElement = document.createElement('div');
+        previewElement.className = 's2t-stream-preview';
+        messageTextElement.insertAdjacentElement('afterend', previewElement);
+    }
+
+    const formattedText = renderFormattedText(context, id, message, previewText);
+    if (typeof formattedText === 'string') {
+        previewElement.innerHTML = formattedText;
+    } else {
+        previewElement.textContent = previewText;
+    }
+
+    messageElement.classList?.add('s2t-streaming-preview-active');
+}
+
 function clearStreamingTimer() {
     if (streamingState.timer) {
         clearTimeout(streamingState.timer);
@@ -293,6 +353,7 @@ function startStreamingPreview(type) {
 
 function stopStreamingPreview() {
     clearStreamingTimer();
+    removeStreamingPreview();
     streamingState.active = false;
     streamingState.type = '';
     streamingState.messageId = null;
@@ -336,7 +397,7 @@ async function renderStreamingPreview() {
     }
 
     const changed = await convertMessage(message);
-    updateRenderedMessage(context, id, message);
+    updateStreamingPreviewElement(context, id, message);
     return changed;
 }
 
@@ -350,7 +411,8 @@ function scheduleStreamingPreview(delay = Number(getSettings().streamingUpdateIn
         return;
     }
 
-    const interval = Math.max(80, Number(delay) || 250);
+    const numericDelay = Number(delay);
+    const interval = numericDelay <= 0 ? 0 : Math.max(80, numericDelay || 250);
     streamingState.timer = setTimeout(async () => {
         streamingState.timer = null;
         if (!streamingState.active) {
@@ -380,7 +442,13 @@ async function flushStreamingPreview() {
 
     clearStreamingTimer();
     try {
-        await renderStreamingPreview();
+        const context = getContext();
+        const id = findStreamingMessageId(context);
+        if (Number.isInteger(id)) {
+            const message = context.chat[id];
+            await convertMessage(message);
+            updateRenderedMessage(context, id, message);
+        }
     } catch (error) {
         console.warn(`[${EXTENSION_NAME}] streaming preview flush failed`, error);
     } finally {
@@ -652,7 +720,7 @@ function attachEvents() {
     source.on(events.GENERATION_ENDED, () => enqueueConversion(flushStreamingPreview));
     source.on(events.GENERATION_STOPPED, () => enqueueConversion(flushStreamingPreview));
     if (events.STREAM_TOKEN_RECEIVED) {
-        source.on(events.STREAM_TOKEN_RECEIVED, () => scheduleStreamingPreview());
+        source.on(events.STREAM_TOKEN_RECEIVED, () => scheduleStreamingPreview(Number.isInteger(streamingState.messageId) ? undefined : 0));
     }
 
     source.on(events.MESSAGE_RECEIVED, (messageId) => enqueueConversion(() => convertMessageById(messageId, 'incoming', { updateBlock: true })));
